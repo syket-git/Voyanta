@@ -29,6 +29,11 @@ async function proxy(
   const requestId = request.headers.get("x-request-id");
   if (requestId) headers.set("x-request-id", requestId);
 
+  // The session lives in this cookie. Without forwarding it the backend sees every
+  // request as anonymous.
+  const cookie = request.headers.get("cookie");
+  if (cookie) headers.set("cookie", cookie);
+
   let upstream: Response;
 
   try {
@@ -56,6 +61,13 @@ async function proxy(
     const value = upstream.headers.get(header);
     if (value) responseHeaders.set(header, value);
   }
+
+  // getSetCookie() keeps multiple Set-Cookie headers separate; reading them as one
+  // joined string would corrupt any cookie whose value contains a comma.
+  for (const cookie of upstream.headers.getSetCookie()) {
+    responseHeaders.append("set-cookie", cookie);
+  }
+
   responseHeaders.set("x-accel-buffering", "no");
 
   return new Response(upstream.body, {
@@ -65,6 +77,9 @@ async function proxy(
   });
 }
 
+// Every verb the client uses must be exported by name — Next answers 405 for any that
+// is not, and the request never reaches the backend.
 export const GET = proxy;
 export const POST = proxy;
+export const PATCH = proxy;
 export const DELETE = proxy;

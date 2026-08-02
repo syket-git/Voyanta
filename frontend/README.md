@@ -1,11 +1,13 @@
 # Voyanta — Frontend
 
-Next.js 16 (App Router) + Tailwind v4 + shadcn/ui. Two routes:
+Next.js 16 (App Router) + Tailwind v4 + shadcn/ui.
 
-| Route   | What it is                                                     |
-| ------- | -------------------------------------------------------------- |
-| `/`     | Marketing page                                                  |
-| `/chat` | The app — streaming chat against the [backend](../backend)      |
+| Route              | What it is                                            |
+| ------------------ | ----------------------------------------------------- |
+| `/`                | Marketing page, public                                |
+| `/login`, `/signup`| Email and password auth                               |
+| `/chat`            | A new conversation                                    |
+| `/chat/[threadId]` | An existing thread, with the sidebar of past threads  |
 
 ## Run
 
@@ -31,33 +33,46 @@ Point it at a backend somewhere other than `http://127.0.0.1:8000` with
 ## How it talks to the backend
 
 Every call goes through `app/api/voyanta/[...path]/route.ts`, which proxies to FastAPI.
-Nothing in the browser knows the backend's address.
+Nothing in the browser knows the backend's address, requests are same-origin so **CORS
+never applies**, and the session cookie is forwarded in both directions.
 
-That is worth keeping. It makes requests same-origin, so **CORS never applies** and the
-backend's `CORS_ORIGINS` is irrelevant in this setup. It is also the only place a session
-could be attached: the backend trusts `user_id` from the request body, so once there is
-auth, the proxy is where `user_id` gets set — never the client.
+Each HTTP verb must be exported by name from that route. Next answers **405** for any
+verb it does not export, and the request never reaches the backend.
 
 The streaming turn is a `POST`, so `EventSource` cannot be used; it only issues `GET`.
 `lib/voyanta.ts` reads `response.body` and splits SSE frames on the blank-line terminator
 instead, buffering whatever partial frame is left at the end of each chunk.
 
+## Auth
+
+`proxy.ts` (Next 16's rename of middleware) redirects signed-out visitors away from
+`/chat`, but that is **only** to avoid flashing the app — Next's own docs say Proxy is not
+an authorization mechanism. `app/chat/layout.tsx` verifies the session against the backend
+before rendering, and the backend authorises every request regardless. Removing the proxy
+check would leak nothing.
+
 ## Layout
 
 ```
+proxy.ts                        Optimistic redirect for signed-out visitors
 app/
 ├── page.tsx                    Marketing page
-├── chat/page.tsx               The app
+├── login/, signup/             Auth pages
+├── chat/layout.tsx             Session check + sidebar shell
+├── chat/page.tsx               New conversation
+├── chat/[threadId]/page.tsx    An existing thread
 ├── api/voyanta/[...path]/      Proxy to FastAPI
 ├── layout.tsx                  Fonts, dark theme, toaster
 └── globals.css                 Design tokens
 components/
 ├── departure-board.tsx         The landing page's signature element
 ├── markdown.tsx                Renders the agent's markdown replies
-├── chat/                       chat-panel, message-row, composer, tool-trace
+├── auth/auth-form.tsx          Shared by login and signup
+├── chat/                       workspace, sidebar, message-row, composer, tool-trace
 └── ui/                         shadcn primitives
 hooks/use-chat.ts               Streaming state machine
 lib/voyanta.ts                  Typed client for the backend contract
+lib/session.ts                  Server-side session read
 ```
 
 ## Notes

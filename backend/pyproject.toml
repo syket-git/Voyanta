@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "airportsdata>=20260315",
+    "argon2-cffi>=25.1.0",
     "certifi>=2026.7.22",
     "fastapi>=0.141.1",
     "langchain>=1.3.14",
@@ -17,9 +18,14 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "pycountry>=26.2.16",
     "pydantic-settings>=2.14.2",
+    "pydantic[email]>=2.13.4",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "slowapi>=0.1.10",
     "tavily-python>=0.7.27",
     "uvicorn>=0.52.0",
 ]
+
+[tool.ruff.lint.flake8-bugbear]
+# `Depends(...)` in a default is how FastAPI declares dependencies, not a mutable default.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]

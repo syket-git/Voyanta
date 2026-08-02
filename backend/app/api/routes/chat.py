@@ -2,10 +2,9 @@
 
 import json
 import logging
-import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import (
     AIMessageChunk,
@@ -15,11 +14,14 @@ from langchain_core.messages import (
 )
 
 from app.agent import MODEL_NODE_NAME
+from app.api.deps import require_user
 from app.api.limiter import limiter
+from app.auth.sessions import AuthenticatedUser
 from app.config import settings
 from app.logging_config import run_id_var
 from app.observability import build_run_config, new_run_id
 from app.schemas import ChatRequest, ChatResponse, extract_tool_calls, message_text
+from app.threads import repository
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,6 +29,24 @@ router = APIRouter()
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _resolve_thread(pool, user: AuthenticatedUser, req: ChatRequest) -> str:
+    """Return the thread this turn belongs to, creating it on the first message.
+
+    Naming someone else's thread is rejected rather than silently redirected — otherwise
+    a request could append turns to a stranger's conversation.
+    """
+    if req.thread_id:
+        if not await repository.owns_thread(pool, user.id, req.thread_id):
+            raise HTTPException(status_code=404, detail="No thread found.")
+        return req.thread_id
+
+    thread = await repository.create_thread(
+        pool, user.id, repository.title_from_message(req.message)
+    )
+
+    return thread.id
 
 
 def _current_turn(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -43,23 +63,30 @@ def _current_turn(messages: list[BaseMessage]) -> list[BaseMessage]:
 
 @router.post("/chat", response_model=ChatResponse)
 @limiter.limit(settings.chat_rate_limit)
-async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+async def chat(
+    req: ChatRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> ChatResponse:
     """Run one turn and return the complete reply."""
-    agent = request.app.state.agent
-    thread_id = req.thread_id or str(uuid.uuid4())
+    pool = request.app.state.pool
+    thread_id = await _resolve_thread(pool, user, req)
     run_id = new_run_id()
     run_id_var.set(run_id)
 
-    config = build_run_config(thread_id, run_id, user_id=req.user_id)
+    config = build_run_config(thread_id, run_id, user_id=user.id)
 
     logger.info(
         "chat turn", extra={"thread_id": thread_id, "message_len": len(req.message)}
     )
 
-    result = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": req.message}]},
-        config=config,
-    )
+    try:
+        result = await request.app.state.agent.ainvoke(
+            {"messages": [{"role": "user", "content": req.message}]},
+            config=config,
+        )
+    finally:
+        await repository.touch_thread(pool, user.id, thread_id)
 
     messages = result.get("messages", [])
     reply = message_text(messages[-1]) if messages else ""
@@ -77,11 +104,11 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
 
 
 async def event_stream(
-    agent,
+    request: Request,
     message: str,
     thread_id: str,
     run_id: str,
-    user_id: str | None = None,
+    user_id: str,
 ) -> AsyncIterator[str]:
     """Yield SSE frames for one turn.
 
@@ -89,6 +116,7 @@ async def event_stream(
     On failure: error, then done.
     """
     run_id_var.set(run_id)
+    agent = request.app.state.agent
     config = build_run_config(thread_id, run_id, user_id=user_id)
 
     yield _sse("metadata", {"thread_id": thread_id, "run_id": run_id})
@@ -138,22 +166,28 @@ async def event_stream(
         logger.exception("stream failed for thread %s", thread_id)
         yield _sse("error", {"message": "Internal server error", "run_id": run_id})
 
+    await repository.touch_thread(request.app.state.pool, user_id, thread_id)
+
     yield _sse("done", {"thread_id": thread_id, "run_id": run_id})
 
 
 @router.post("/chat/stream")
 @limiter.limit(settings.chat_rate_limit)
-async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
+async def chat_stream(
+    req: ChatRequest,
+    request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> StreamingResponse:
     """Run one turn, streaming tokens to the browser as they are generated."""
-    thread_id = req.thread_id or str(uuid.uuid4())
+    # Ownership is resolved before the response starts: once streaming begins the status
+    # code is already 200 and a 404 can no longer be sent.
+    thread_id = await _resolve_thread(request.app.state.pool, user, req)
     run_id = new_run_id()
 
     logger.info("chat stream turn", extra={"thread_id": thread_id, "run_id": run_id})
 
     return StreamingResponse(
-        event_stream(
-            request.app.state.agent, req.message, thread_id, run_id, req.user_id
-        ),
+        event_stream(request, req.message, thread_id, run_id, user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

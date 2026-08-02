@@ -45,6 +45,7 @@ export default function Home() {
           <Wordmark />
           <Button
             render={<Link href="/chat" />}
+            nativeButton={false}
             size="sm"
             className="gap-1.5 font-mono text-[0.6875rem] uppercase tracking-[0.12em]"
           >
@@ -74,6 +75,7 @@ export default function Home() {
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <Button
                 render={<Link href="/chat" />}
+                nativeButton={false}
                 size="lg"
                 className="h-11 gap-2 px-5 font-mono text-xs uppercase tracking-[0.12em]"
               >
@@ -82,6 +84,7 @@ export default function Home() {
               </Button>
               <Button
                 render={<a href="#rules" />}
+                nativeButton={false}
                 size="lg"
                 variant="outline"
                 className="h-11 px-5 font-mono text-xs uppercase tracking-[0.12em]"
@@ -179,6 +182,7 @@ export default function Home() {
               </p>
               <Button
                 render={<Link href="/chat" />}
+                nativeButton={false}
                 size="lg"
                 className="mt-8 h-11 gap-2 px-5 font-mono text-xs uppercase tracking-[0.12em]"
               >

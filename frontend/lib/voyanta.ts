@@ -24,6 +24,18 @@ export interface ThreadHistory {
   messages: MessageOut[];
 }
 
+export interface User {
+  id: string;
+  email: string;
+}
+
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type StreamEvent =
   | { type: "metadata"; thread_id: string; run_id: string }
   | { type: "token"; content: string }
@@ -40,10 +52,28 @@ export const MAX_MESSAGE_LENGTH = 4000;
 async function failure(response: Response): Promise<string> {
   try {
     const body = await response.json();
-    return body?.error ?? body?.detail ?? `Request failed (${response.status})`;
+    const detail = body?.error ?? body?.detail;
+
+    // FastAPI validation errors arrive as a list of per-field objects.
+    if (Array.isArray(detail)) {
+      return detail[0]?.msg ?? `Request failed (${response.status})`;
+    }
+
+    return typeof detail === "string" ? detail : `Request failed (${response.status})`;
   } catch {
     return `Request failed (${response.status})`;
   }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    ...init,
+  });
+
+  if (!response.ok) throw new Error(await failure(response));
+
+  return response.status === 204 ? (undefined as T) : response.json();
 }
 
 /**
@@ -112,6 +142,35 @@ function parseFrame(frame: string): StreamEvent | null {
   }
 }
 
+export function signup(email: string, password: string): Promise<User> {
+  return request("/auth/signup", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function login(email: string, password: string): Promise<User> {
+  return request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function logout(): Promise<void> {
+  return request("/auth/logout", { method: "POST" });
+}
+
+export function listThreads(): Promise<ThreadSummary[]> {
+  return request("/threads");
+}
+
+export function renameThread(threadId: string, title: string): Promise<ThreadSummary> {
+  return request(`/threads/${encodeURIComponent(threadId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
 export async function fetchThread(threadId: string): Promise<ThreadHistory | null> {
   const response = await fetch(`${API}/threads/${encodeURIComponent(threadId)}`);
 
@@ -129,16 +188,13 @@ export async function deleteThread(threadId: string): Promise<void> {
   if (!response.ok && response.status !== 404) throw new Error(await failure(response));
 }
 
-export async function sendFeedback(
+export function sendFeedback(
   runId: string,
   score: 0 | 1,
   comment?: string,
 ): Promise<void> {
-  const response = await fetch(`${API}/feedback`, {
+  return request("/feedback", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ run_id: runId, score, comment }),
   });
-
-  if (!response.ok) throw new Error(await failure(response));
 }

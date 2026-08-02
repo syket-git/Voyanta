@@ -1,12 +1,12 @@
 "use client";
 
-import { Plus } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
-import { Wordmark } from "@/components/brand";
 import { Composer } from "@/components/chat/composer";
 import { MessageRow } from "@/components/chat/message-row";
-import { Button } from "@/components/ui/button";
+import { useThreads } from "@/components/chat/threads-provider";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useChat } from "@/hooks/use-chat";
 
 const OPENERS = [
@@ -15,8 +15,22 @@ const OPENERS = [
   "Long weekend in Kathmandu — what can I actually see in three days?",
 ];
 
-export function ChatPanel() {
-  const { messages, threadId, isStreaming, isRestoring, send, stop, reset } = useChat();
+export function ChatWorkspace({ threadId }: { threadId: string | null }) {
+  const { refresh } = useThreads();
+
+  // The backend mints the thread on the first message. Correcting the URL with
+  // replaceState rather than a router navigation is deliberate: navigating here would
+  // unmount this component and kill the in-flight stream.
+  const onThreadCreated = useCallback((id: string) => {
+    window.history.replaceState(null, "", `/chat/${id}`);
+  }, []);
+
+  const { messages, isStreaming, isLoading, send, stop } = useChat({
+    threadId,
+    onThreadCreated,
+    onTurnComplete: refresh,
+  });
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -36,43 +50,27 @@ export function ChatPanel() {
   }, []);
 
   useEffect(() => {
-    if (pinnedRef.current) {
-      bottomRef.current?.scrollIntoView({ block: "end" });
-    }
+    if (pinnedRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages]);
 
-  const empty = !messages.length && !isRestoring;
+  const empty = !messages.length && !isLoading;
 
   return (
     <div className="flex h-dvh flex-col bg-background">
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3">
-        <Wordmark />
-
-        <div className="flex items-center gap-3">
-          {threadId ? (
-            <span
-              title={threadId}
-              className="hidden font-mono text-[0.6875rem] tracking-[0.08em] text-muted-foreground sm:inline"
-            >
-              thread {threadId.slice(0, 8)}
-            </span>
-          ) : null}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={reset}
-            disabled={isStreaming || !messages.length}
-            className="gap-1.5 font-mono text-[0.6875rem] uppercase tracking-[0.12em]"
-          >
-            <Plus aria-hidden className="size-3.5" />
-            New trip
-          </Button>
-        </div>
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-3">
+        <SidebarTrigger />
+        <span className="rule-label">Voyanta</span>
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl px-4 py-8">
-          {empty ? (
+          {isLoading ? (
+            <div className="space-y-4 pt-6">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+            </div>
+          ) : empty ? (
             <div className="pt-10 pb-4">
               <p className="rule-label">Departures</p>
               <h1 className="mt-3 font-display text-3xl font-semibold tracking-tight text-balance">

@@ -35,23 +35,31 @@ const components: Components = {
   p: ({ className, ...props }) => (
     <p className={cn("leading-7 text-foreground/85", className)} {...props} />
   ),
+  // The dash marker is scoped to `ul` here rather than set on `li`, so ordered items
+  // keep their numbers instead of getting a number and a dash.
   ul: ({ className, ...props }) => (
-    <ul className={cn("space-y-1.5 pl-0", className)} {...props} />
-  ),
-  ol: ({ className, ...props }) => (
-    <ol className={cn("list-decimal space-y-1.5 pl-5", className)} {...props} />
-  ),
-  li: ({ className, children, ...props }) => (
-    <li
+    <ul
       className={cn(
-        "relative pl-4 leading-7 text-foreground/85",
-        "before:absolute before:left-0 before:top-[0.85em] before:h-px before:w-2 before:bg-border",
+        "space-y-1.5 pl-0",
+        "[&>li]:relative [&>li]:pl-4",
+        "[&>li]:before:absolute [&>li]:before:left-0 [&>li]:before:top-[0.85em]",
+        "[&>li]:before:h-px [&>li]:before:w-2 [&>li]:before:bg-border",
         className,
       )}
       {...props}
-    >
-      {children}
-    </li>
+    />
+  ),
+  ol: ({ className, ...props }) => (
+    <ol
+      className={cn(
+        "list-decimal space-y-1.5 pl-5 marker:font-mono marker:text-muted-foreground",
+        className,
+      )}
+      {...props}
+    />
+  ),
+  li: ({ className, ...props }) => (
+    <li className={cn("leading-7 text-foreground/85", className)} {...props} />
   ),
   strong: ({ className, ...props }) => (
     <strong className={cn("font-semibold text-foreground", className)} {...props} />

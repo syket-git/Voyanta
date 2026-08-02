@@ -4,6 +4,7 @@ These models are the seam the React/Next frontend codes against — keep them st
 mirror any change in the TypeScript types on the other side.
 """
 
+from datetime import datetime
 from typing import Any, Literal
 
 from langchain_core.messages import (
@@ -13,19 +14,48 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 Role = Literal["user", "assistant", "tool", "system"]
 
 
 class ChatRequest(BaseModel):
+    # `forbid` so a client that still sends the old `user_id` field fails loudly rather
+    # than having it silently ignored. Identity comes from the session, never the body.
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(min_length=1, max_length=4000)
     thread_id: str | None = Field(
         default=None,
         max_length=255,
         description="Omit on the first turn; the server mints one and returns it.",
     )
-    user_id: str | None = Field(default=None, max_length=255)
+
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=200)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=200)
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+
+
+class ThreadSummary(BaseModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RenameThreadRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
 
 
 class ToolCallInfo(BaseModel):

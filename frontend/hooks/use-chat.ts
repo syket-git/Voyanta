@@ -25,8 +25,6 @@ export interface ChatMessage {
   failed?: boolean;
 }
 
-const THREAD_STORAGE_KEY = "voyanta.thread";
-
 /**
  * Re-parsing markdown on every token is wasted work — tokens arrive far faster than a
  * reader can follow. Text accumulates in a ref and flushes to state on this interval.
@@ -61,19 +59,11 @@ function fromHistory(messages: MessageOut[]): ChatMessage[] {
       settled: true,
     }));
 
-    if (!message.content.trim()) {
-      restored.push({
-        id: message.id || makeId(),
-        role: "assistant",
-        content: "",
-        trace,
-        failed: false,
-      });
-      continue;
-    }
-
     const pending = restored.at(-1);
-    if (pending?.role === "assistant" && !pending.content) {
+
+    if (!message.content.trim()) {
+      restored.push({ id: message.id || makeId(), role: "assistant", content: "", trace });
+    } else if (pending?.role === "assistant" && !pending.content) {
       pending.content = message.content;
       pending.trace.push(...trace);
     } else {
@@ -89,43 +79,47 @@ function fromHistory(messages: MessageOut[]): ChatMessage[] {
   return restored.filter((m) => m.role === "user" || m.content || m.trace.length);
 }
 
-export function useChat() {
+export function useChat({
+  threadId: routeThreadId,
+  onThreadCreated,
+  onTurnComplete,
+}: {
+  threadId: string | null;
+  onThreadCreated?: (threadId: string) => void;
+  onTurnComplete?: () => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [threadId, setThreadId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [isRestoring, setIsRestoring] = useState(true);
+  const [isLoading, setIsLoading] = useState(Boolean(routeThreadId));
 
+  // The live thread id. It diverges from the route on the very first message, when the
+  // backend mints a thread and the URL is corrected without a navigation.
+  const threadRef = useRef<string | null>(routeThreadId);
   const abortRef = useRef<AbortController | null>(null);
   const bufferRef = useRef("");
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Loads once per thread. Switching threads remounts this hook via a `key` on the
+  // workspace, which is React's own answer to "reset state when a prop changes" and
+  // avoids resetting through an effect.
   useEffect(() => {
-    const saved = window.localStorage.getItem(THREAD_STORAGE_KEY);
+    if (!routeThreadId) return;
+
     let cancelled = false;
 
-    const restore = saved ? fetchThread(saved) : Promise.resolve(null);
-
-    restore
+    fetchThread(routeThreadId)
       .then((history) => {
-        if (cancelled) return;
-        if (history) {
-          setThreadId(history.thread_id);
-          setMessages(fromHistory(history.messages));
-        } else if (saved) {
-          window.localStorage.removeItem(THREAD_STORAGE_KEY);
-        }
+        if (!cancelled && history) setMessages(fromHistory(history.messages));
       })
-      .catch(() => {
-        if (saved) window.localStorage.removeItem(THREAD_STORAGE_KEY);
-      })
+      .catch(() => {})
       .finally(() => {
-        if (!cancelled) setIsRestoring(false);
+        if (!cancelled) setIsLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [routeThreadId]);
 
   useEffect(() => {
     return () => {
@@ -171,15 +165,20 @@ export function useChat() {
 
       flushTimerRef.current = setInterval(flush, FLUSH_INTERVAL_MS);
 
+      let created = false;
+
       try {
         for await (const event of streamChat(
-          { message: trimmed, threadId: threadId ?? undefined },
+          { message: trimmed, threadId: threadRef.current ?? undefined },
           { signal: controller.signal },
         )) {
           switch (event.type) {
             case "metadata":
-              setThreadId(event.thread_id);
-              window.localStorage.setItem(THREAD_STORAGE_KEY, event.thread_id);
+              if (!threadRef.current) {
+                threadRef.current = event.thread_id;
+                created = true;
+                onThreadCreated?.(event.thread_id);
+              }
               updateLast((message) => ({ ...message, runId: event.run_id }));
               break;
 
@@ -241,19 +240,14 @@ export function useChat() {
         flush();
         setIsStreaming(false);
         abortRef.current = null;
+        // A new thread needs a title in the sidebar; an existing one needs reordering.
+        if (created || threadRef.current) onTurnComplete?.();
       }
     },
-    [isStreaming, threadId, updateLast],
+    [isStreaming, onThreadCreated, onTurnComplete, updateLast],
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
-  const reset = useCallback(() => {
-    abortRef.current?.abort();
-    window.localStorage.removeItem(THREAD_STORAGE_KEY);
-    setThreadId(null);
-    setMessages([]);
-  }, []);
-
-  return { messages, threadId, isStreaming, isRestoring, send, stop, reset };
+  return { messages, isStreaming, isLoading, send, stop };
 }

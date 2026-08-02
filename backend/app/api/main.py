@@ -23,6 +23,8 @@ from slowapi.errors import RateLimitExceeded
 from app.agent import build_agent
 from app.api.limiter import limiter
 from app.api.routes import chat, feedback, threads
+from app.auth import routes as auth_routes
+from app.db import apply_schema
 from app.logging_config import configure_logging, request_id_var
 from app.observability import configure_tracing
 from app.schemas import ErrorResponse
@@ -58,6 +60,7 @@ async def lifespan(app: FastAPI):
 
     checkpointer = AsyncPostgresSaver(pool)
     await checkpointer.setup()  # idempotent
+    await apply_schema(pool)
 
     app.state.pool = pool
     app.state.checkpointer = checkpointer
@@ -151,6 +154,7 @@ async def health(request: Request):
     return JSONResponse(status_code=200 if db_ok else 503, content=body)
 
 
+app.include_router(auth_routes.router, prefix="/api", tags=["auth"])
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(threads.router, prefix="/api", tags=["threads"])
 app.include_router(feedback.router, prefix="/api", tags=["feedback"])

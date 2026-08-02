@@ -33,6 +33,9 @@ class Settings(BaseSettings):
 
     database_url: str | None = None
 
+    session_cookie_name: str = "voyanta_session"
+    session_ttl_days: int = 30
+
     cors_origins_csv: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
         validation_alias="CORS_ORIGINS",

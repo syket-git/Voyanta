@@ -44,13 +44,22 @@ Interactive API docs: <http://localhost:8000/docs>
 
 ## API
 
+Everything under `/api` except `/api/auth/signup` and `/api/auth/login` requires a
+session cookie.
+
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/health` | Liveness plus a real `SELECT 1` against Postgres |
+| `POST` | `/api/auth/signup` | Create an account and sign in |
+| `POST` | `/api/auth/login` | Exchange credentials for a session cookie |
+| `POST` | `/api/auth/logout` | Revoke the current session |
+| `GET` | `/api/auth/me` | The signed-in user |
 | `POST` | `/api/chat` | Run one turn, return the full reply |
 | `POST` | `/api/chat/stream` | Run one turn, stream tokens over SSE |
+| `GET` | `/api/threads` | The caller's threads, most recent first |
 | `GET` | `/api/threads/{thread_id}` | Full message history for a thread |
-| `DELETE` | `/api/threads/{thread_id}` | Delete a thread |
+| `PATCH` | `/api/threads/{thread_id}` | Rename a thread |
+| `DELETE` | `/api/threads/{thread_id}` | Delete a thread and its messages |
 | `POST` | `/api/feedback` | Thumbs up/down on a run → LangSmith |
 
 ### Threads
@@ -163,10 +172,22 @@ in `app/tools/flight_tool.py`.
 calls `load_dotenv()`, and LangChain reads `LANGSMITH_*` at import time. Import langchain
 before it and tracing silently stays off.
 
-**LangSmith traces include full user messages.** Fine here; review before handling
-personal or payment data.
+**Authorization lives here, not in the frontend.** Every thread route filters on the
+session's `user_id` in the SQL itself, so there is no path that reads a thread without
+proving ownership. Another user's thread returns 404 rather than 403, so ids cannot be
+probed for existence. Next.js only does an optimistic cookie check to avoid flashing the
+app at a signed-out visitor — deleting that check would change nothing about who can read
+what.
 
-**There is no authentication.** Any caller who knows a `thread_id` can read or delete
-that conversation, and `user_id` is whatever the client claims. Put this behind an
-authenticated gateway, or add auth here, before exposing it publicly. Rate limiting keys
-on the client IP, so it also needs a trusted-proxy header behind a load balancer.
+**Sessions are opaque tokens, stored hashed.** There is no signing secret to rotate; the
+`sessions` table holds a SHA-256, so a database dump yields no usable session.
+
+**The schema is applied on every boot** from `app/db/schema.sql`, which mirrors how the
+checkpointer sets up its own tables. Every statement must stay idempotent. Reach for
+Alembic when a column needs to change shape rather than merely appear.
+
+**Still missing:** password reset, email verification, and per-user rate limiting — the
+limiter keys on IP, so behind a proxy every user shares one bucket.
+
+**LangSmith traces include full user messages.** Review before handling personal or
+payment data.
