@@ -8,13 +8,15 @@ LangSmith.
 ```
 Voyanta/
 ├── backend/     LangGraph agent + FastAPI HTTP API (Python 3.14, uv)
-└── frontend/    Web client — not started yet
+└── frontend/    Next.js 16 + Tailwind v4 + shadcn/ui (pnpm)
 ```
 
-The two halves are independent: the backend is a plain JSON/SSE API over HTTP, so the
-frontend can be built with whatever stack you choose and deployed separately.
+The two halves are independent: the backend is a plain JSON/SSE API, and the frontend
+proxies to it server-side, so either can be deployed on its own.
 
 ## Getting started
+
+Two terminals. Backend first — the frontend has nothing to talk to without it.
 
 ```bash
 cd backend
@@ -23,11 +25,16 @@ cp .env.example .env     # then fill in your keys
 uv run uvicorn app.api.main:app --reload --port 8000
 ```
 
-Interactive API docs land at <http://localhost:8000/docs>.
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
 
-See [backend/README.md](backend/README.md) for the full endpoint reference, the SSE event
-contract, and the setup notes. [frontend/README.md](frontend/README.md) covers what the
-client needs to talk to it.
+The app is at <http://localhost:3000>, the API docs at <http://localhost:8000/docs>.
+
+See [backend/README.md](backend/README.md) for the endpoint reference and SSE contract,
+and [frontend/README.md](frontend/README.md) for how the client consumes it.
 
 ## Conventions
 
@@ -35,5 +42,6 @@ client needs to talk to it.
   or workspace tooling — run commands from inside `backend/` or `frontend/`.
 - Secrets live in a git-ignored `.env` beside the code that reads them, never at the
   repository root.
-- The backend's CORS allowlist (`CORS_ORIGINS`) must include the frontend's dev server
-  origin, or the browser blocks every request.
+- The browser never calls FastAPI directly. Requests go through the Next.js proxy at
+  `/api/voyanta/*`, which keeps them same-origin — so CORS does not apply, and the
+  backend's origin stays server-side.
