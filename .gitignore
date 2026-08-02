@@ -9,3 +9,20 @@ wheels/
 # Virtual environments
 .venv
 .env
+.env.local
+
+# Node / frontend
+node_modules/
+.next/
+.nuxt/
+.svelte-kit/
+.output/
+.vite/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
