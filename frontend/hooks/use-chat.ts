@@ -83,10 +83,12 @@ export function useChat({
   threadId: routeThreadId,
   onThreadCreated,
   onTurnComplete,
+  onQuotaExceeded,
 }: {
   threadId: string | null;
   onThreadCreated?: (threadId: string) => void;
   onTurnComplete?: () => void;
+  onQuotaExceeded?: (message: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -212,12 +214,19 @@ export function useChat({
 
             case "error":
               flush();
+
+              // A spent allowance is not a fault to apologise for — it is the backend's
+              // own explanation, so it is shown verbatim and the plan dialog follows.
+              if (event.upgrade) onQuotaExceeded?.(event.message);
+
               updateLast((message) => ({
                 ...message,
                 failed: true,
                 content:
                   message.content ||
-                  "The planner hit an error partway through. Try sending that again.",
+                  (event.upgrade
+                    ? event.message
+                    : "The planner hit an error partway through. Try sending that again."),
               }));
               break;
 
@@ -244,7 +253,7 @@ export function useChat({
         if (created || threadRef.current) onTurnComplete?.();
       }
     },
-    [isStreaming, onThreadCreated, onTurnComplete, updateLast],
+    [isStreaming, onQuotaExceeded, onThreadCreated, onTurnComplete, updateLast],
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);

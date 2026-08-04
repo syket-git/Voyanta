@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
+import { useBilling } from "@/components/billing/billing-provider";
 import { Composer } from "@/components/chat/composer";
 import { MessageRow } from "@/components/chat/message-row";
 import { useThreads } from "@/components/chat/threads-provider";
@@ -17,6 +18,7 @@ const OPENERS = [
 
 export function ChatWorkspace({ threadId }: { threadId: string | null }) {
   const { refresh } = useThreads();
+  const { refresh: refreshBilling, promptUpgrade } = useBilling();
 
   // The backend mints the thread on the first message. Correcting the URL with
   // replaceState rather than a router navigation is deliberate: navigating here would
@@ -25,10 +27,18 @@ export function ChatWorkspace({ threadId }: { threadId: string | null }) {
     window.history.replaceState(null, "", `/chat/${id}`);
   }, []);
 
+  // The turn was counted server-side before the reply started, so the meter is stale the
+  // moment a turn ends.
+  const onTurnComplete = useCallback(() => {
+    refresh();
+    refreshBilling();
+  }, [refresh, refreshBilling]);
+
   const { messages, isStreaming, isLoading, send, stop } = useChat({
     threadId,
     onThreadCreated,
-    onTurnComplete: refresh,
+    onTurnComplete,
+    onQuotaExceeded: promptUpgrade,
   });
 
   const bottomRef = useRef<HTMLDivElement>(null);

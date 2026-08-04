@@ -14,9 +14,10 @@ from langchain_core.messages import (
 )
 
 from app.agent import MODEL_NODE_NAME
-from app.api.deps import require_user
+from app.api.deps import require_turn, require_user
 from app.api.limiter import limiter
 from app.auth.sessions import AuthenticatedUser
+from app.billing import Account, release_turn
 from app.config import settings
 from app.logging_config import run_id_var
 from app.observability import build_run_config, new_run_id
@@ -35,18 +36,23 @@ async def _resolve_thread(pool, user: AuthenticatedUser, req: ChatRequest) -> st
     """Return the thread this turn belongs to, creating it on the first message.
 
     Naming someone else's thread is rejected rather than silently redirected — otherwise
-    a request could append turns to a stranger's conversation.
+    a request could append turns to a stranger's conversation. The turn reserved by
+    `require_turn` is handed back when that happens, since the model never ran.
     """
-    if req.thread_id:
-        if not await repository.owns_thread(pool, user.id, req.thread_id):
-            raise HTTPException(status_code=404, detail="No thread found.")
-        return req.thread_id
+    try:
+        if req.thread_id:
+            if not await repository.owns_thread(pool, user.id, req.thread_id):
+                raise HTTPException(status_code=404, detail="No thread found.")
+            return req.thread_id
 
-    thread = await repository.create_thread(
-        pool, user.id, repository.title_from_message(req.message)
-    )
+        thread = await repository.create_thread(
+            pool, user.id, repository.title_from_message(req.message)
+        )
 
-    return thread.id
+        return thread.id
+    except Exception:
+        await release_turn(pool, user.id)
+        raise
 
 
 def _current_turn(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -67,6 +73,7 @@ async def chat(
     req: ChatRequest,
     request: Request,
     user: AuthenticatedUser = Depends(require_user),
+    account: Account = Depends(require_turn),
 ) -> ChatResponse:
     """Run one turn and return the complete reply."""
     pool = request.app.state.pool
@@ -77,7 +84,12 @@ async def chat(
     config = build_run_config(thread_id, run_id, user_id=user.id)
 
     logger.info(
-        "chat turn", extra={"thread_id": thread_id, "message_len": len(req.message)}
+        "chat turn",
+        extra={
+            "thread_id": thread_id,
+            "message_len": len(req.message),
+            "turns_used": account.turns_used,
+        },
     )
 
     try:
@@ -85,6 +97,9 @@ async def chat(
             {"messages": [{"role": "user", "content": req.message}]},
             config=config,
         )
+    except Exception:
+        await release_turn(pool, user.id)
+        raise
     finally:
         await repository.touch_thread(pool, user.id, thread_id)
 
@@ -164,6 +179,7 @@ async def event_stream(
         # Must be caught inside the generator: raising after StreamingResponse has
         # started sends a truncated body under a 200 status and the client hangs.
         logger.exception("stream failed for thread %s", thread_id)
+        await release_turn(request.app.state.pool, user_id)
         yield _sse("error", {"message": "Internal server error", "run_id": run_id})
 
     await repository.touch_thread(request.app.state.pool, user_id, thread_id)
@@ -177,6 +193,7 @@ async def chat_stream(
     req: ChatRequest,
     request: Request,
     user: AuthenticatedUser = Depends(require_user),
+    account: Account = Depends(require_turn),
 ) -> StreamingResponse:
     """Run one turn, streaming tokens to the browser as they are generated."""
     # Ownership is resolved before the response starts: once streaming begins the status
@@ -184,7 +201,14 @@ async def chat_stream(
     thread_id = await _resolve_thread(request.app.state.pool, user, req)
     run_id = new_run_id()
 
-    logger.info("chat stream turn", extra={"thread_id": thread_id, "run_id": run_id})
+    logger.info(
+        "chat stream turn",
+        extra={
+            "thread_id": thread_id,
+            "run_id": run_id,
+            "turns_used": account.turns_used,
+        },
+    )
 
     return StreamingResponse(
         event_stream(request, req.message, thread_id, run_id, user.id),

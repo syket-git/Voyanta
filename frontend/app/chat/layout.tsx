@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
+import { BillingProvider } from "@/components/billing/billing-provider";
 import { ThreadSidebar } from "@/components/chat/thread-sidebar";
 import { ThreadsProvider } from "@/components/chat/threads-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -18,10 +20,16 @@ export default async function ChatLayout({
 
   return (
     <ThreadsProvider>
-      <SidebarProvider>
-        <ThreadSidebar email={user.email} />
-        <SidebarInset>{children}</SidebarInset>
-      </SidebarProvider>
+      {/* BillingProvider reads the ?checkout= parameter Stripe returns with, and
+          useSearchParams needs a Suspense boundary above it to prerender this layout. */}
+      <Suspense>
+        <BillingProvider>
+          <SidebarProvider>
+            <ThreadSidebar email={user.email} />
+            <SidebarInset>{children}</SidebarInset>
+          </SidebarProvider>
+        </BillingProvider>
+      </Suspense>
     </ThreadsProvider>
   );
 }

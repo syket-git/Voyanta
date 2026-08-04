@@ -82,6 +82,27 @@ class ThreadHistory(BaseModel):
     messages: list[MessageOut]
 
 
+class BillingStatus(BaseModel):
+    plan: Literal["free", "pro"]
+    plan_label: str
+    turns_used: int
+    turns_limit: int
+    turns_remaining: int
+    # Renewal date on Pro, the first of next month on Free — either way, when the number
+    # above goes back up.
+    period_end: datetime
+    price_label: str
+    subscription_status: str | None = None
+    # False when Stripe is unconfigured: the client must then not offer an upgrade it
+    # cannot complete, and the backend stops enforcing the cap to match.
+    billing_enabled: bool = False
+    manageable: bool = False
+
+
+class BillingRedirect(BaseModel):
+    url: str
+
+
 class FeedbackRequest(BaseModel):
     run_id: str = Field(max_length=255)
     score: Literal[0, 1] = Field(description="0 = thumbs down, 1 = thumbs up")

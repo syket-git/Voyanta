@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { UsageMeter } from "@/components/billing/usage-meter";
 import { useThreads } from "@/components/chat/threads-provider";
 import {
   AlertDialog,
@@ -188,8 +189,10 @@ export function ThreadSidebar({ email }: { email: string }) {
           </SidebarGroup>
         </SidebarContent>
 
-        <SidebarFooter className="border-t border-sidebar-border p-3">
-          <div className="flex items-center justify-between gap-2">
+        <SidebarFooter className="gap-3 border-t border-sidebar-border p-3">
+          <UsageMeter />
+
+          <div className="flex items-center justify-between gap-2 border-t border-sidebar-border pt-3">
             <span className="truncate font-mono text-[0.6875rem] text-muted-foreground">
               {email}
             </span>

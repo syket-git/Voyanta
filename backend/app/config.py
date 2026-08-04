@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     session_cookie_name: str = "voyanta_session"
     session_ttl_days: int = 30
 
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+    stripe_price_id: str | None = None
+    # Where Stripe sends the browser back after checkout or the billing portal. Must be a
+    # frontend URL, not this API's.
+    billing_return_url: str = "http://localhost:3000/chat"
+
+    free_turns_per_month: int = 20
+    pro_turns_per_month: int = 500
+    pro_price_label: str = "$15/month"
+
     cors_origins_csv: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
         validation_alias="CORS_ORIGINS",
@@ -66,6 +77,17 @@ class Settings(BaseSettings):
     @property
     def tracing_enabled(self) -> bool:
         return self.langsmith_tracing and bool(self.langsmith_api_key)
+
+    @property
+    def billing_enabled(self) -> bool:
+        """All three keys or none — a half-configured Stripe is worse than no Stripe.
+
+        With this off, quotas still count but nothing is ever refused, so a missing key
+        cannot lock every user out of the product.
+        """
+        return bool(
+            self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_id
+        )
 
 
 settings = Settings()  # type: ignore[call-arg]

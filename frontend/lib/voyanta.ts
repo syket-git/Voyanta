@@ -36,12 +36,28 @@ export interface ThreadSummary {
   updated_at: string;
 }
 
+export interface BillingStatus {
+  plan: "free" | "pro";
+  plan_label: string;
+  turns_used: number;
+  turns_limit: number;
+  turns_remaining: number;
+  /** Renewal date on Pro, the first of next month on Free. */
+  period_end: string;
+  price_label: string;
+  subscription_status: string | null;
+  billing_enabled: boolean;
+  manageable: boolean;
+}
+
 export type StreamEvent =
   | { type: "metadata"; thread_id: string; run_id: string }
   | { type: "token"; content: string }
   | { type: "tool_start"; name: string; args: Record<string, unknown> }
   | { type: "tool_end"; name: string; preview: string }
-  | { type: "error"; message: string; run_id?: string }
+  // `upgrade` marks the one failure the reader can do something about: the monthly
+  // allowance is spent, so the UI offers a plan rather than a retry.
+  | { type: "error"; message: string; run_id?: string; upgrade?: boolean }
   | { type: "done"; thread_id: string; run_id: string };
 
 const API = "/api/voyanta";
@@ -94,7 +110,13 @@ export async function* streamChat(
   });
 
   if (!response.ok || !response.body) {
-    yield { type: "error", message: await failure(response) };
+    // 402 is the backend saying the allowance is spent. It arrives as a normal JSON
+    // response rather than an SSE frame, because the refusal happens before the stream.
+    yield {
+      type: "error",
+      message: await failure(response),
+      upgrade: response.status === 402,
+    };
     return;
   }
 
@@ -186,6 +208,19 @@ export async function deleteThread(threadId: string): Promise<void> {
   });
 
   if (!response.ok && response.status !== 404) throw new Error(await failure(response));
+}
+
+export function fetchBillingStatus(): Promise<BillingStatus> {
+  return request("/billing/status");
+}
+
+/** Both of these return a Stripe-hosted URL; the caller navigates the browser to it. */
+export function startCheckout(): Promise<{ url: string }> {
+  return request("/billing/checkout", { method: "POST" });
+}
+
+export function openBillingPortal(): Promise<{ url: string }> {
+  return request("/billing/portal", { method: "POST" });
 }
 
 export function sendFeedback(

@@ -43,6 +43,21 @@ The streaming turn is a `POST`, so `EventSource` cannot be used; it only issues 
 `lib/voyanta.ts` reads `response.body` and splits SSE frames on the blank-line terminator
 instead, buffering whatever partial frame is left at the end of each chunk.
 
+## Billing
+
+The sidebar footer shows the usage meter. When the backend answers **402** the chat hook
+calls `promptUpgrade`, and `BillingProvider` raises the upgrade dialog carrying the
+backend's own wording — the client never decides that the allowance is spent, it only
+reacts to being told.
+
+Two details worth keeping:
+
+- **The upgrade button only appears when `billing_enabled` is true.** Offering an upgrade
+  that cannot complete is worse than showing no upgrade at all.
+- **After Checkout the provider polls `/billing/status` briefly.** Stripe's webhook and
+  the browser redirect race each other and the redirect usually wins, so without the poll
+  the user lands back on a page still reading "Free" moments after paying.
+
 ## Auth
 
 `proxy.ts` (Next 16's rename of middleware) redirects signed-out visitors away from

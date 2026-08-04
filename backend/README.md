@@ -28,6 +28,9 @@ cp .env.example .env     # then fill in your keys
 Keys you need: `OPENAI_API_KEY`, `TAVILY_API_KEY`, `AVIATIONSTACK_API_KEY`,
 `DATABASE_URL`, and `LANGSMITH_API_KEY` for tracing.
 
+The `STRIPE_*` keys are optional — see [Billing](#billing). Without them the app runs
+normally and simply never charges anyone.
+
 ## Run
 
 ```bash
@@ -61,6 +64,10 @@ session cookie.
 | `PATCH` | `/api/threads/{thread_id}` | Rename a thread |
 | `DELETE` | `/api/threads/{thread_id}` | Delete a thread and its messages |
 | `POST` | `/api/feedback` | Thumbs up/down on a run → LangSmith |
+| `GET` | `/api/billing/status` | Plan, turns used, and when the allowance resets |
+| `POST` | `/api/billing/checkout` | Stripe Checkout URL for the Pro subscription |
+| `POST` | `/api/billing/portal` | Stripe customer portal URL — cancel, card, invoices |
+| `POST` | `/api/billing/webhook` | Stripe's callback. No session; trusted by signature |
 
 ### Threads
 
@@ -133,6 +140,77 @@ curl -X POST localhost:8000/api/feedback \
 ```
 
 Filtering LangSmith to thumbs-down traces gives you a bug queue ranked by real user pain.
+
+---
+
+## Billing
+
+Every account gets `FREE_TURNS_PER_MONTH` turns. A turn is one message and the reply it
+produces — not tokens. Tokens are the real cost, but nobody can look at "140,000 left"
+and know whether that is a lot.
+
+Past the allowance the chat endpoints answer **402 Payment Required**, and the client
+raises the upgrade dialog. 402 rather than 403 so the client can tell "you are not signed
+in" from "you are, but this costs money".
+
+**Leaving the Stripe keys blank is a supported mode.** Turns are still counted, but never
+refused — `billing_enabled` requires all three keys, and a cap with no way to pay past it
+is not a business model, it is an outage.
+
+### Setting it up
+
+1. Create a **recurring** price in Stripe (a `price_...`, not a `prod_...`) and put it in
+   `STRIPE_PRICE_ID`.
+2. Put the secret key in `STRIPE_SECRET_KEY`. Test keys are fine and cost nothing.
+3. Forward webhooks locally:
+
+   ```bash
+   stripe listen --forward-to localhost:8000/api/billing/webhook
+   ```
+
+   Copy the `whsec_...` it prints into `STRIPE_WEBHOOK_SECRET`. In production this is the
+   endpoint's signing secret from the dashboard instead.
+4. Restart the API. `GET /api/billing/status` now reports `billing_enabled: true`.
+
+Test the whole loop with card `4242 4242 4242 4242`, any future expiry, any CVC.
+
+**The product needs a `tax_code`.** Managed Payments is on by default on new accounts and
+rejects a Checkout session whose product has none — `Invalid line_items[0]: the product
+tax code is missing`. The Pro product is set to `txcd_10103000` (SaaS, personal use);
+change it if your accountant disagrees. The alternative is opting out per session with
+`managed_payments[enabled]=false`, which also gives up Stripe's tax handling.
+
+**Prices are presented in the customer's local currency.** Stripe's Adaptive Pricing
+converts at checkout, so a Bangladeshi customer sees BDT even though the price is USD and
+`PRO_PRICE_LABEL` says `$15/month`. The subscription is still billed in USD. If that
+mismatch matters, either turn Adaptive Pricing off or make the label currency-aware.
+
+### Two rules the integration depends on
+
+**Point Stripe at the API directly, never at the Next.js proxy.** The signature is
+computed over the exact bytes of the body; a proxy that re-encodes JSON on the way through
+invalidates it. Every other browser call goes through the proxy — this one does not.
+
+**Access is granted by webhook, never by the browser returning from Checkout.** The
+success URL is a redirect the user controls: it can be opened directly, replayed, or never
+visited at all after a perfectly good payment. Only the webhook is Stripe telling the
+server what happened.
+
+Each webhook also re-fetches the subscription rather than trusting the payload it arrived
+with, because Stripe does not promise delivery order — an older `subscription.updated` can
+land after a newer one. Re-fetching makes order irrelevant.
+
+### Deliberate choices
+
+- **A turn is reserved before the model runs**, in one conditional statement. Counting
+  afterwards would let two simultaneous requests both read "19 used" and both proceed.
+  A run that fails before producing anything hands its turn back; a cancelled one does
+  not, because the tokens were still bought.
+- **`past_due` keeps access.** Stripe retries a failed charge for about two weeks, and
+  most failures are an expired card rather than a decision to stop paying. `unpaid` is
+  where those retries give up, and that does lose access.
+- **No reset job.** The counter is keyed `YYYY-MM`, so a new month is a new key and the
+  old row simply stops being read. There is nothing to schedule and nothing to fail.
 
 ---
 

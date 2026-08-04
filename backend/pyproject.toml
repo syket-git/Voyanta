@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "slowapi>=0.1.10",
+    "stripe[async]>=15.4.0",
     "tavily-python>=0.7.27",
     "uvicorn>=0.52.0",
 ]

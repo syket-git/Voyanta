@@ -35,3 +35,35 @@ CREATE TABLE IF NOT EXISTS threads (
 );
 
 CREATE INDEX IF NOT EXISTS threads_user_updated_idx ON threads (user_id, updated_at DESC);
+
+-- Billing. `plan` is this app's own record of what a user is entitled to, written by the
+-- Stripe webhook. The request path reads it from here and never calls Stripe: an API
+-- round trip on every turn would put Stripe's availability in front of the chat endpoint.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id     text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan                   text NOT NULL DEFAULT 'free';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status    text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS current_period_end     timestamptz;
+
+-- The webhook looks users up by customer id, so two rows must never claim the same one.
+CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_key
+    ON users (stripe_customer_id)
+    WHERE stripe_customer_id IS NOT NULL;
+
+-- One row per user per calendar month, created on first use. Quota resets are therefore
+-- a consequence of the period key changing, not of a scheduled job that could fail to run.
+CREATE TABLE IF NOT EXISTS usage_counters (
+    user_id    uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    period     text NOT NULL,
+    turns      integer NOT NULL DEFAULT 0,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, period)
+);
+
+-- Stripe redelivers webhooks until it gets a 2xx, and delivers at-least-once regardless.
+-- A row here makes the second delivery of an event a no-op.
+CREATE TABLE IF NOT EXISTS stripe_events (
+    id           text PRIMARY KEY,
+    type         text NOT NULL,
+    processed_at timestamptz NOT NULL DEFAULT now()
+);
